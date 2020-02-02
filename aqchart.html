@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- Required meta tags -->
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+  <!-- Bootstrap CSS -->
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css"
+    integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
+  <title>PM2.5 24 hour figures for Canberra (V2)</title>
+  <script src="jquery-3.4.1.min.js"></script>
+  <script src="https://www.gstatic.com/charts/loader.js"></script>
+
+  <title>PM2.5 Charts</title>
+  <script>
+    var GOOGLE_LOADED = false;
+    var HAS_DATA = false;
+    var HOURLY_DATA = {};
+    var DATATYPE_NAME = "PM2.5 Hourly";
+    var DATATYPE_FIELD = "pm2_5_1_hr";
+    var DATATYPE = "0";
+
+    var PURPLE = {
+      46225: "Watson", 42085: "Downer", 45307: "Bungendore", 41449: "Chisholm", 42391: "Tuggeranong",
+      45629: "Kingston", 46223: "Melba", 45529: "Hawker", 46289: "Nicholls", 46217: "Campbell"
+    };
+
+    var PURPLE_LIST_URL = "https://www.purpleair.com/data.json?opt=1/mPM25/a10/cC0&fetch=true&nwlat=-35.113366&selat=-35.906423&nwlng=148.894512&selng=149.603537&fields=ID,Label,Lat,Lon,Age";
+    var PURPLE_LIST_LOADED = false;
+
+    var BOM_SITES = [94926, 94925, 99762, 99145, 99146, 99763];
+
+    var THRESHHOLDS = [ // Yoinked from CanberraAir.com, in turn yoinked from ACT health site.
+      ["Very Good", 0, "#3d85c6"],
+      ["Good", 34, "green"],
+      ["Fair", 67, "#f1c232"],
+      ["Poor", 100, "#e59137"],
+      ["Very Poor", 150, "#a64d79"],
+      ["Hazardous", 200, "#ff0000"]
+    ];
+
+    var THINGSPEAK = "https://thingspeak.com/channels/966200/feed.json"; // Palmerston (SKYWORXX)
+
+
+    var REALTIME = {}; // Cumulative realtime feeds.
+    var WINDDIR = ""; // Canberra Wind direction
+
+    const AQI_FIELDS = ["aqi_co", "aqi_n02", "aqi_o3_1hr", "aqi_o3_4hr", "aqi_pm10", "aqi_pm2_5"];
+
+    var BOM_READINGS = {};
+
+    var USETIMER = false;
+
+    var CANBERRA = [-35.2812958, 149.124822];
+    var WIND_DIR_LIST = {};
+
+
+    $(document).ready(function () {
+      $("#status").html("JQuery loaded.");
+      var options = getUrlVars();
+      $("#asaqi").prop('checked', options.asaqi == '1');
+      USETIMER = (options.timer == '1');
+      setDatatype(options.datatype || '0');
+      loadthreshholds();
+      if (GOOGLE_LOADED) redrawchart();
+      if (USETIMER) {
+        setTimeout(updatetimer, nextminute());
+      }
+
+    });
+
+    google.charts.load('current', { packages: ['corechart'] });
+    google.charts.setOnLoadCallback(function () { GOOGLE_LOADED = true; redrawchart(); });
+    window.addEventListener(
+      "resize",
+      () => redrawchart(),
+      false
+    );
+
+    buildwinddir();
+
+    function buildwinddir() {
+      var list = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+      var direction = 0;
+      for (let n of list) {
+        WIND_DIR_LIST[n] = direction;
+        direction += 22.5;
+      }
+    }
+
+    function nextminute() {
+      var d = new Date();
+      d.setSeconds(0);
+      d.setMilliseconds(0);
+      d.setMinutes(d.getMinutes() + 1);
+      return d.getTime() - Date.now();
+    };
+
+    function updatetimer() {
+      updatechart();
+      setTimeout(updatetimer, nextminute());
+    }
+    /**
+     * @param {string} atype
+     */
+    function setDatatype(atype) {
+      switch (atype) {
+        case '1': DATATYPE_NAME = "PM10 Hourly"; DATATYPE_FIELD = "pm10_1_hr"; break;
+        case '2': DATATYPE_NAME = "PM2.5 24 Hour Average"; DATATYPE_FIELD = "pm2_5_24hr_rolling"; break;
+        case '3': DATATYPE_NAME = "PM10 24 Hour Average"; DATATYPE_FIELD = "pm10_24hr_rolling"; break;
+        default: DATATYPE_NAME = "PM2.5 Hourly"; DATATYPE_FIELD = "pm2_5_1_hr"; break;
+      }
+      DATATYPE = atype;
+      $(document).attr('title', DATATYPE_NAME + ' figures for Canberra');
+      var caption = DATATYPE_NAME + ' readings for Canberra (24 Hours)';
+      if ($("#asaqi").prop('checked')) caption += " (As AQI)";
+      $("#caption").html(caption);
+    }
+
+    function jsonerror(jqXHR, textStatus, errorThrown) {
+      var s = "Error: " + textStatus + " " + errorThrown + " " + this.url;
+      console.log(s)
+      showstatus(s);
+    }
+
+    function dojson(url, success) {
+      $.ajax({
+        dataType: "json",
+        url: url,
+        success: success,
+        error: jsonerror,
+        timeout: 20000 // 20 second timeout should be adequate
+      });
+    }
+
+    function rangetag(v) {
+      var tag = "";
+      if (tag !== null) {
+        for (i = THRESHHOLDS.length - 1; i >= 0; i--) {
+          if (v > THRESHHOLDS[i][1] || i == 0) {
+            tag = " class='thold' style='background-color: " + THRESHHOLDS[i][2] + ";'";
+            break;
+          }
+        }
+      }
+      return tag;
+    }
+
+    function rangerow(v) {
+      var i;
+      var tag = "";
+      if (v === null) v = "No Data";
+      else {
+        tag = rangetag(v);
+        for (i = THRESHHOLDS.length - 1; i >= 0; i--) {
+          if (v > THRESHHOLDS[i][1] || i == 0) {
+            tag = " class='thold' style='background-color: " + THRESHHOLDS[i][2] + ";'";
+            break;
+          }
+        }
+      }
+      return "<td" + tag + ">" + v + "</td>";
+
+    }
+
+    function drawChart(jsondata) {
+      // Define the chart to be drawn.
+      var data = new google.visualization.DataTable();
+      data.addColumn('datetime', 'Time');
+      data.addColumn('number', 'Florey');
+      data.addColumn('number', 'Civic');
+      data.addColumn('number', 'Monash');
+      rows = {}
+      for (var i in jsondata) {
+        var row = jsondata[i];
+        var key = row['datetime'];
+        if (!DATATYPE_FIELD in row) continue;
+        if (!(key in rows)) {
+          rows[key] = { timestamp: key, Florey: null, Civic: null, Monash: null };
+        }
+        var v = parseFloat(row[DATATYPE_FIELD]);
+        if ($('#asaqi').prop('checked')) {
+          if (DATATYPE == '1' || DATATYPE == '3') v = v * 2; else v = v * 4;
+        }
+        rows[key][row['station']] = v;
+      }
+      var tz = (new Date()).getTimezoneOffset();
+      var lastdate = new Date();
+      var table = "";
+      try {
+        for (var key in rows) {
+          var row = rows[key];
+          //	  if (!('Florey' in row)) row['Florey']=0.0;
+          //	  if (!('Civic' in row)) row['Civic']=0.0;
+          //	  if (!('Monash' in row)) row['Monash']=0.0;
+          var d = new Date(row.timestamp + "1000"); // Times are all Canberra Non-daylight savings.
+          if (tz != -600) {
+            d.setMinutes(d.getMinutes() + (-600) - tz);
+          }
+          d = new Date(isodate(d)); // Slightly clunky way of converting to local time
+          lastdate = d;
+          mydata = [d, row.Florey, row.Civic, row.Monash];
+          data.addRow(mydata);
+          table = "<tr><th>" + d.toLocaleTimeString() + "</th>"
+            + rangerow(row.Florey)
+            + rangerow(row.Civic)
+            + rangerow(row.Monash)
+            + "</tr>\n" + table;
+        }
+        $("#status").html("Last Update=" + lastdate.toString());
+        table = "<table><thead><th>Time</th><th>Florey</th><th>Civic</th><th>Monash</th></thead><tbody>\n" + table + "</tbody></table>";
+        $("#figures").html(table);
+      } catch (err) {
+        showstatus(err.message);
+        return;
+      }
+
+      // Instantiate and draw the chart.
+      var chart = new google.visualization.LineChart(document.getElementById('myPieChart'));
+      chart.draw(data, null);
+    }
+
+    function redrawchart() {
+      if (!GOOGLE_LOADED) return;
+      if (HAS_DATA) drawChart(HOURLY_DATA)
+      else updatechart();
+    }
+
+    function showstatus(msg) {
+      $("#status").html(msg);
+    }
+
+    function loadchart(data) {
+      showstatus("Lines loaded=" + data.length);
+      HAS_DATA = true;
+      HOURLY_DATA = data;
+      drawChart(data);
+    }
+
+    function padz(s, len) {
+      s = s.toString();
+      while (s.length < len) s = "0" + s;
+      return s;
+    }
+
+    function isodate(d) { // Return date in iso format without timezone (or ms).
+      return padz(d.getFullYear(), 4) + "-" + padz(d.getMonth() + 1, 2) + "-" + padz(d.getDate(), 2) +
+        "T" + padz(d.getHours(), 2) + ":" + padz(d.getMinutes(), 2) + ":" + padz(d.getSeconds(), 2);
+    }
+
+    function updatechart() {
+      showstatus("Update chart...");
+      var url = "https://www.data.act.gov.au/resource/ufvu-jybu.json";
+      var d = new Date();
+      d.setHours(d.getHours() - 25); // Seems clunky... Allow for tz differences
+      d.setMinutes(0);
+      d.setSeconds(0);
+      d.setMilliseconds(0);
+      url += "?$where=datetime>='" + isodate(d) + "'&$order=datetime";
+      $("#url").attr("href", url);
+      dojson(url, loadchart);
+
+      queryPurple();
+
+      for (let i in BOM_SITES) {
+        let station = BOM_SITES[i];
+        url = "http://studio13.mithril.com.au/aqxref.php?station=" + station;
+        dojson(url, loadweather);
+      }
+
+      url = "https://www.data.act.gov.au/resource/94a5-zqnn.json?$order=datetime+DESC&$limit=6";
+      dojson(url, loadAQI);
+      url = THINGSPEAK;
+      dojson(url, loadThingspeak);
+    }
+
+    function queryPurple() {
+      // Purple Air
+      var url = "https://www.purpleair.com/json";
+      url += "?show=" + Object.keys(PURPLE).join("|");
+      dojson(url, loadpurple); // Downer + Bungendore + Chisholm
+    }
+
+    function queryPurpleList() {
+      dojson(PURPLE_LIST_URL, loadPurpleList)
+    }
+
+    function loadPurpleList(data) {
+      var fields = data.fields;
+      var list = data.data;
+      // "ID","age","conf","Type","Label","Lat","Lon","isOwner","Flags","CH"
+      var fAge = fields.indexOf("age");
+      var fLat = fields.indexOf("Lat");
+      var fLon = fields.indexOf("Lon");
+      var fType = fields.indexOf("Type");
+      var fLabel = fields.indexOf("Label");
+      var fID = fields.indexOf("ID");
+      var refresh = false;
+      for (let r of list) {
+        if (r[fAge] > 999) continue;
+        if (r[fLat] === null || r[fLon] === null) continue;
+        if (r[fType] == 1) continue; // Not interested (much) indoors.
+        let id = r[fID];
+        if (!(id in PURPLE)) {
+          PURPLE[id] = r[fLabel];
+          refresh = true;
+        }
+      }
+      PURPLE_LIST_LOADED = true;
+      if (refresh) queryPurple();
+    }
+
+    function shorttime(d) {
+      return d.toLocaleString(navigator.language);
+    }
+
+    function toCelsius(f) {
+      return (f - 32) * 5 / 9;
+    }
+
+    function getpurpledate(timestamp) {
+      return new Date(parseInt(timestamp) * 1000);
+    }
+
+    function loadpurple(data) {
+      var results = data.results;
+      for (var ix in results) {
+        let r = results[ix];
+        if (!(r.ID in PURPLE)) continue; // Ignore secondary channels.
+        let e = { "site": r.ID, "name": PURPLE[r.ID], "datetime": getpurpledate(r.LastSeen), "lat": r.Lat, "lon": r.Lon, "pm25": r.PM2_5Value, "temp": toCelsius(r.temp_f), "hum": r.humidity }
+        let stats = $.parseJSON(r.Stats);
+        e.pm25_1hr = stats.v3;
+        REALTIME[e.site] = e;
+      }
+      loadrealtime();
+      if (!PURPLE_LIST_LOADED) queryPurpleList();
+    }
+
+    function loadrealtime() {
+      var figures = "<b>Realtime PM2.5</b> " + (new Date()).toLocaleTimeString(navigator.language);
+      figures += "<table>";
+      figures += "<thead><tr><th>Name</th><th>Current</th><th>1 Hr</th><th>Temp</th><th>Hum</th><th>Age</th></tr></thead>\n";
+      figures += "<tbody>";
+      var now = Date.now();
+      for (var ix of sortbylonglat()) {
+        var r = REALTIME[ix];
+        var age = Math.round((now - r.datetime.getTime()) / 1000);
+        if (age > 999) continue; // Too old to be trusted.
+        figures += "<tr><td><a href='" + mapurl(r.lat, r.lon) + "' target='_blank'>" + r.name + "</a></td>" +
+          "<td " + rangetag(r.pm25) + ">" + r.pm25 + "</td>";
+        figures += "<td " + rangetag(r.pm25_1hr) + ">" + r.pm25_1hr + "</td>";
+        figures += "<td>" + r.temp.toFixed(1) + "</td>";
+        figures += "<td>" + r.hum + "</td>";
+        figures += "<td>" + showage(age) + "</td>";
+        figures += "</tr>\n";
+      }
+      figures += "</tbody></table>";
+      $('#purple').html(figures);
+    }
+
+    function mapurl(lat, lon) {
+      return "https://www.google.com.au/maps/place/" + lat + ',' + lon + '/@' + lat + ',' + lon + ',14z';
+    }
+
+    function showage(age) {
+      //  if (age<120) return age;
+      if (age < 600) return Math.floor(age / 60) + ":" + padz(Math.floor(age % 60), 2);
+      return Math.round(age / 60) + "m";
+    }
+
+    function loadweather(data) {
+      /*  var observations=data.observations;
+              var header=observations.header; */
+      var result = "<table><thead><tr><th>Name</th><th>Temp</th><th>Wind</th><th>Rain</th><th>Hum</th><th>Age</th></tr></thead><tbody>";
+      BOM_READINGS[data.wmo] = data;
+      var lasttime = "Unknown";
+      var keys = [];
+      var now = Date.now();
+      for (let id in BOM_READINGS) keys.push(id);
+      keys.sort();
+      for (let id in keys) {
+        //    observations=BOM_READINGS[id];
+        //    let latest=observations.data[0];
+        let latest = BOM_READINGS[keys[id]];
+        let ds = latest.aifstime_utc;
+        ds = ds.substr(0, 4) + "-" + ds.substr(4, 2) + "-" + ds.substr(6, 2) + "T" + ds.substr(8, 2) + ":" + ds.substr(10, 2) + ":" + ds.substr(12, 2) + "Z";
+        let d = new Date(ds);
+        let age = Math.round((now - d.getTime()) / 1000);
+
+        result += "<tr><td><a href='" + mapurl(latest.lat, latest.lon) + "' target='_blank'>" + latest.name + "</a></td>" +
+          "<td>" + latest.air_temp + "</td>" +
+          "<td>" + latest.wind_dir + " " + latest.wind_spd_kmh + "</td>" +
+          "<td>" + latest.rain_trace + "</td>" +
+          "<td>" + latest.rel_hum + "</td>" +
+          "<td>" + showage(age) + "</td>" +
+          "</tr>\n";
+        lasttime = latest.local_date_time;
+      }
+      result += "</tbody></table>";
+      $("#weather").html(result);
+      $("#weather_time").html(lasttime);
+      if (data.name == "Canberra") {
+        WINDDIR = data.wind_dir;
+        loadrealtime();
+      }
+    }
+
+    function loadthreshholds() {
+      var s = "";
+      var divisor = (["1", "3"].includes(DATATYPE)) ? 2 : 4;
+      if ($("#asaqi").prop("checked")) divisor = 1;
+      for (let x = 0; x < THRESHHOLDS.length; x++) {
+        THRESHHOLDS[x][1] /= divisor;
+      }
+      for (var i in THRESHHOLDS) {
+        var row = THRESHHOLDS[i];
+        var range;
+        if (i < THRESHHOLDS.length - 1) range = "<" + THRESHHOLDS[parseInt(i) + 1][1];
+        else range = ">=" + row[1];
+        s += "<div style='background-color: " + row[2] + "' class='thold col col-6 col-sm-4 col-lg-auto'> " + row[0] + " " + range + " </div> ";
+      }
+      $("#threshholds").html(s);
+    }
+
+    function loadAQI(data) {
+
+      var result = "<div class='col-12 col-md-auto'>AQI: </div>";
+      var divisor = (["1", "3"].includes(DATATYPE)) ? 2 : 4;
+      var list = {};
+      for (let r of data) {
+        let name = r.name;
+        if (!(name in list) || list[name] < r.datetime) {
+          list[name] = r;
+        }
+      }
+      for (let k of Object.keys(list).sort()) {
+        let r = list[k];
+        let maxaqi = 0;
+        let maxfield = "";
+        for (let f of AQI_FIELDS) {
+          let v = parseFloat(r[f]);
+          if (v > maxaqi) {
+            maxaqi = v;
+            maxfield = f;
+          }
+        }
+        r.aqi_site = r.aqi_site || maxaqi;
+        result += "<div class='col-2 col-md-auto'><b>" + r.name + "</b></div><div class='col-10 col-md-auto'><span " + rangetag(r.aqi_site / divisor) + ">" + r.aqi_site + "</span>";
+        result += "(" + maxfield.substr(4).replace("_5", ".5").replace("_", " ") + ") </div>";
+      }
+      $("#AQI").html(result);
+    }
+    function updateoptions() {
+      var url = "?datatype=" + DATATYPE;
+      if ($("#asaqi").prop("checked")) url += '&asaqi=1';
+      location.href = url;
+    }
+
+    function loadThingspeak(data) {
+      var channel = data.channel;
+      var lastentry = "";
+      var entry;
+      var lasthour = 0.0;
+      var cnt = 0;
+      var now = Date.now();
+      for (let i in data.feeds) { // Find latest non-null
+        let e = data.feeds[i];
+        let d = new Date(e.created_at);
+        if (now - d.getTime() < 3600000 && e.field2 !== null) { // Last hour
+          lasthour += parseFloat(e.field2);
+          cnt += 1;
+        }
+
+        if (e.created_at > lastentry && e.field2 !== null) {
+          entry = e;
+          lastentry = e.created_at;
+        }
+      }
+      let e = {
+        "site": channel.id, "name": "Palmerston", "datetime": new Date(entry.created_at), "lat": parseFloat(channel.latitude), "lon": parseFloat(channel.longitude),
+        "pm25": parseFloat(entry.field2), "temp": parseFloat(entry.field4), "hum": parseFloat(entry.field5)
+      };
+      e.pm25_1hr = "";
+      if (cnt > 0) e.pm25_1hr = Math.round(lasthour * 10 / cnt) / 10; // 1 decimal place
+      REALTIME[e.site] = e;
+      loadrealtime();
+    }
+
+    function sortbylonglat() {
+      var mylist = [];
+      var ret = [];
+      //var order = WINDDIR.length == 3 ? WINDDIR.substr(1, 1) : WINDDIR.substr(0, 1);
+      //if (order == "" || order == "C") order = "N";
+      order=WIND_DIR_LIST[WINDDIR] || 0;
+
+
+      for (let i in REALTIME) {
+        let e = REALTIME[i];
+        let result=rotate(CANBERRA[0],CANBERRA[1],e.lat,e.lon,order);
+        mylist.push({ "lat": e.lat, "lon": e.lon, "id": i, "rotated": result[0] });
+      }
+      mylist.sort(function (a, b) {
+        return b.rotated-a.rotated;
+      });
+      for (var o of mylist) ret.push(o.id);
+      return ret;
+    }
+
+    // Read a page's GET URL variables and return them as an associative array.
+    function getUrlVars() {
+      var vars = [], hash;
+      var hashes = window.location.href.slice(window.location.href.indexOf('?') + 1).split('&');
+      for (var i = 0; i < hashes.length; i++) {
+        hash = hashes[i].split('=');
+        vars.push(hash[0]);
+        vars[hash[0]] = hash[1];
+      }
+      return vars;
+    }
+
+    /**
+ * Rotate a point around a centre
+ * @param {number} cx centerx
+ * @param {number} cy centery
+ * @param {number} x 
+ * @param {number} y 
+ * @param {number} angle in degrees
+ */
+function rotate(cx, cy, x, y, angle) {
+    var radians = (Math.PI / 180) * angle,
+        cos = Math.cos(radians),
+        sin = Math.sin(radians),
+        nx = (cos * (x - cx)) + (sin * (y - cy)) + cx,
+        ny = (cos * (y - cy)) - (sin * (x - cx)) + cy;
+    return [nx, ny];
+}
+
+  </script>
+  <style>
+    td {
+      text-align: right;
+    }
+
+    .thold {
+      color: white;
+      font-weight: bold;
+    }
+  </style>
+
+</head>
+
+<body>
+  <h3 id="caption">Canberra 24 hour PM2.5 readings</h3>
+  <p id="status">Status</p>
+  <!-- Identify where the chart should be drawn. -->
+  <div id="myPieChart"></div>
+  <button onclick="updatechart();">Refresh</button> Show as AQI: <input type="checkbox" id="asaqi"
+    onclick="updateoptions();">
+  <div class="container-fluid">
+    <div class="row" id="AQI">
+    </div>
+  </div>
+  <div class="container-fluid">
+    <div class="row">
+      <div class="col-auto" id="purple" style="border: solid purple 1px"></div>
+      <div class="col-auto" style="border: solid blue 1px">
+        <b>Weather</b> <span id="weather_time"></span><span id="weather"></span>
+      </div>
+      <div class="col-auto" id="palmerston">
+
+      </div>
+    </div>
+    <b>Options</b>
+    <div class="row">
+      <div class="col-6 col-md-auto"><a href="?datatype=0">PM2.5 Hourly</a></div>
+      <div class="col-6 col-md-auto"><a href="?datatype=1">PM10 Hourly</a></div>
+      <div class="col-6 col-md-auto"><a href="?datatype=2">PM2.5 24 Hour Rolling</a></div>
+      <div class="col-6 col-md-auto"><a href="?datatype=3">PM10 24 Hour Rolling</a></div>
+    </div>
+    <b>Links</b>
+    <div class="row">
+      <div class="col-auto">
+        <a href="https://www.canberraair.com/" target="_blank">Canberra Air</a>
+      </div>
+      <div class="col-auto">
+        <a href="https://earth.nullschool.net/#current/particulates/surface/level/overlay=pm2.5/orthographic=149.06,-35.21,3000/loc=149.064,-35.206"
+          target="_blank">earth map with wind currents</a></div>
+      <div class="col-auto">
+        <a href="https://www.purpleair.com/map?opt=1/mPM25/a10/cC0&select=42085#11/-35.2622/149.1803"
+          target="_blank">Purple Air</a>
+      </div>
+      <div class="col-auto">
+        <a href="http://www.bom.gov.au/act/" target="_blank">BOM Site</a>
+      </div>
+      <div class="col-auto">
+        <a href="http://bit.ly/2R2uAuF" target="_blank">Digital Earth Hotspots</a>
+      </div>
+    </div>
+    <div class="row">
+      <div class="col-auto">
+        <a href="https://www.health.act.gov.au/about-our-health-system/population-health/environmental-monitoring/monitoring-and-regulating-air-7"
+          target="_blank">
+          Data from ACT Health Particulate Monitoring.</a>
+        <br>This is data taken straight from the ACT Health dataset and repackaged to be somewhat easier to read,
+        and somewhat more mobile friendly. No responsibility is taken for anything you may use this data for, nor the
+        accuracy of the source data.
+        <br><i>Note that dataset appears to actually update at approx 15mins past the hour.</i>
+        <br>Raw Data: <a id="url" target="_blank">Here</a>
+        <br><b>Realtime</b> figures are sourced from Purple Air and Twitter user SKYWORXX. Realtime data can't be
+        exactly matched to hourly data. Realtime locations are sorted according to the
+        direction the wind is blowing, so in theory trends should be visible reading from top to bottom.
+      </div>
+    </div>
+    <b>Threshholds</b>
+    <div class="row" id="threshholds">
+    </div>
+    <div id="figures"></div>
+  </div>
+
+  <!-- Optional JavaScript -->
+  <script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.0/dist/umd/popper.min.js"
+    integrity="sha384-Q6E9RHvbIyZFJoft+2mJbHaEWldlvI9IOYy5n3zV9zzTtmI3UksdQRVvoxMfooAo"
+    crossorigin="anonymous"></script>
+  <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js"
+    integrity="sha384-wfSDF2E50Y2D1uUdj0O3uMBJnjuUD4Ih7YwaYd1iqfktj0Uod8GCExl3Og8ifwB6"
+    crossorigin="anonymous"></script>
+</body>
+
+</html>
