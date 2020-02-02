@@ -30,7 +30,7 @@
     var PURPLE_LIST_URL = "https://www.purpleair.com/data.json?opt=1/mPM25/a10/cC0&fetch=true&nwlat=-35.113366&selat=-35.906423&nwlng=148.894512&selng=149.603537&fields=ID,Label,Lat,Lon,Age";
     var PURPLE_LIST_LOADED = false;
 
-    var BOM_SITES = [94926, 94925, 99762, 99145, 99146, 99763];
+    var BOM_SITES = [94926,94925,94909,95925,99762,99763,99764,99765,99145,99146]; // All sites within 50km of Canberra
 
     var ACT_HEALTH_URL = "https://www.health.act.gov.au/about-our-health-system/population-health/environmental-monitoring/monitoring-and-regulating-air-7";
 
@@ -563,12 +563,12 @@
   <div class="container-fluid">
     <div class="row" id="AQI"></div>
     <div class="row">
-      <div class="col-12 col-md-auto" id="purple" style="border: solid purple 1px"></div>
-      <div class="col-12 col-md-auto" style="border: solid blue 1px">
+      <div class="col-12 col-md-auto order-md-2" id="purple" style="border: solid purple 1px"></div>
+      <div class="col-12 col-md-auto order-md-3" style="border: solid blue 1px">
         <b><a href="http://www.bom.gov.au/act/observations/canberra.shtml" target="_blank">Weather</a></b> <span
           id="weather_time"></span><span id="weather"></span>
       </div>
-      <div id="figures" class="col-12 col-md-auto" style="border: solid green 1px"></div>
+      <div id="figures" class="col-12 col-md-auto order-md-4 order-lg-1" style="border: solid green 1px"></div>
     </div>
     <b>Options</b>
     <div class="row">

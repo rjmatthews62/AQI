@@ -112,7 +112,9 @@ function loadweather(data) {
             //console.log(record);
         }
     }
-    console.log(JSON.stringify(READINGS));
+    for (r of READINGS) {
+        console.log(r.toString());
+    }
 }
 
 const URL_WEATHER = "ftp://ftp.bom.gov.au/anon/gen/fwo/IDN60920.xml";
