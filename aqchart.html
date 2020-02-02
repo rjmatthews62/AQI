@@ -32,6 +32,8 @@
 
     var BOM_SITES = [94926, 94925, 99762, 99145, 99146, 99763];
 
+    var ACT_HEALTH_URL = "https://www.health.act.gov.au/about-our-health-system/population-health/environmental-monitoring/monitoring-and-regulating-air-7";
+
     var THRESHHOLDS = [ // Yoinked from CanberraAir.com, in turn yoinked from ACT health site.
       ["Very Good", 0, "#3d85c6"],
       ["Good", 34, "green"],
@@ -209,8 +211,9 @@
             + rangerow(row.Monash)
             + "</tr>\n" + table;
         }
-        $("#status").html("Last Update=" + lastdate.toString());
+        $("#status").html("Last Update=" + shorttime(lastdate));
         table = "<table><thead><th>Time</th><th>Florey</th><th>Civic</th><th>Monash</th></thead><tbody>\n" + table + "</tbody></table>";
+        table = "<b><a href='"+ACT_HEALTH_URL+"' target='_blank'>Hourly Figures ACT Health</a></b>" + table;
         $("#figures").html(table);
       } catch (err) {
         showstatus(err.message);
@@ -339,7 +342,8 @@
     }
 
     function loadrealtime() {
-      var figures = "<b>Realtime PM2.5</b> " + (new Date()).toLocaleTimeString(navigator.language);
+      var figures = "<b><a href='https://www.purpleair.com/map?opt=1/mPM25/a0/cC0#10.09/-35.2913/149.1851' target='_blank'>Realtime PM2.5</a></b> " +
+        shorttime(new Date());
       figures += "<table>";
       figures += "<thead><tr><th>Name</th><th>Current</th><th>1 Hr</th><th>Temp</th><th>Hum</th><th>Age</th></tr></thead>\n";
       figures += "<tbody>";
@@ -493,16 +497,16 @@
       var ret = [];
       //var order = WINDDIR.length == 3 ? WINDDIR.substr(1, 1) : WINDDIR.substr(0, 1);
       //if (order == "" || order == "C") order = "N";
-      order=WIND_DIR_LIST[WINDDIR] || 0;
+      order = WIND_DIR_LIST[WINDDIR] || 0;
 
 
       for (let i in REALTIME) {
         let e = REALTIME[i];
-        let result=rotate(CANBERRA[0],CANBERRA[1],e.lat,e.lon,order);
+        let result = rotate(CANBERRA[0], CANBERRA[1], e.lat, e.lon, order);
         mylist.push({ "lat": e.lat, "lon": e.lon, "id": i, "rotated": result[0] });
       }
       mylist.sort(function (a, b) {
-        return b.rotated-a.rotated;
+        return b.rotated - a.rotated;
       });
       for (var o of mylist) ret.push(o.id);
       return ret;
@@ -528,14 +532,14 @@
  * @param {number} y 
  * @param {number} angle in degrees
  */
-function rotate(cx, cy, x, y, angle) {
-    var radians = (Math.PI / 180) * angle,
+    function rotate(cx, cy, x, y, angle) {
+      var radians = (Math.PI / 180) * angle,
         cos = Math.cos(radians),
         sin = Math.sin(radians),
         nx = (cos * (x - cx)) + (sin * (y - cy)) + cx,
         ny = (cos * (y - cy)) - (sin * (x - cx)) + cy;
-    return [nx, ny];
-}
+      return [nx, ny];
+    }
 
   </script>
   <style>
@@ -556,24 +560,24 @@ function rotate(cx, cy, x, y, angle) {
   <p id="status">Status</p>
   <!-- Identify where the chart should be drawn. -->
   <div id="myPieChart"></div>
-  <button onclick="updatechart();">Refresh</button> Show as AQI: <input type="checkbox" id="asaqi"
-    onclick="updateoptions();">
   <div class="container-fluid">
-    <div class="row" id="AQI">
-    </div>
-  </div>
-  <div class="container-fluid">
+    <div class="row" id="AQI"></div>
     <div class="row">
       <div class="col-auto" id="purple" style="border: solid purple 1px"></div>
       <div class="col-auto" style="border: solid blue 1px">
-        <b>Weather</b> <span id="weather_time"></span><span id="weather"></span>
+        <b><a href="http://www.bom.gov.au/act/observations/canberra.shtml" target="_blank">Weather</a></b> <span
+          id="weather_time"></span><span id="weather"></span>
       </div>
-      <div class="col-auto" id="palmerston">
-
-      </div>
+    </div>
+    <div class="row">
+      <div id="figures" class="col-auto"></div>
     </div>
     <b>Options</b>
     <div class="row">
+      <div class="col-12">
+        <button onclick="updatechart();">Refresh</button>
+        Show as AQI: <input type="checkbox" id="asaqi" onclick="updateoptions();">
+      </div>
       <div class="col-6 col-md-auto"><a href="?datatype=0">PM2.5 Hourly</a></div>
       <div class="col-6 col-md-auto"><a href="?datatype=1">PM10 Hourly</a></div>
       <div class="col-6 col-md-auto"><a href="?datatype=2">PM2.5 24 Hour Rolling</a></div>
@@ -611,12 +615,14 @@ function rotate(cx, cy, x, y, angle) {
         <br><b>Realtime</b> figures are sourced from Purple Air and Twitter user SKYWORXX. Realtime data can't be
         exactly matched to hourly data. Realtime locations are sorted according to the
         direction the wind is blowing, so in theory trends should be visible reading from top to bottom.
+        <br>Realtime temperature and humidity are drawn directly from the associated sensor, but these are small, privately owned sensor units.
+        Temperature tends to show a few degrees higher than the official BOM Weather Stations. This is mostly due the the heat of the surrounding
+        electronics, and because the official weather stations are carefully shielded from direct sun.
       </div>
     </div>
     <b>Threshholds</b>
     <div class="row" id="threshholds">
     </div>
-    <div id="figures"></div>
   </div>
 
   <!-- Optional JavaScript -->
