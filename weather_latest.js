@@ -14,13 +14,13 @@ class Reading {
     }
     language() {
         var env = process.env;
-        return env.LC_ALL || env.LC_MESSAGES || env.LANG || env.LANGUAGE;
+        return env.LC_ALL || env.LC_MESSAGES || env.LANG || env.LANGUAGE || "en-AU";
     }
     get time() {
-        return this.datetime.toLocaleString();
+        return this.datetime.toLocaleString(this.language());
     }
     toString() {
-        return `${this.id} ${this.name} ${this.time} ${this.wind_dir} ${this.wind_spd_kmh}`;
+        return `${this.id} ${this.name} ${this.time} ${this.wind_dir} ${this.wind_spd_kmh} (${this.lat},${this.lon}) ${this.Distance}`;
     }
 }
 
@@ -85,6 +85,10 @@ function getinfo(elements, tag) {
 </station>
 */
 
+/**
+ * Load weather xml
+ * @param {string} data 
+ */
 function loadweather(data) {
     var xml = new xmldoc.XmlDocument(data);
     console.log("XML Parsed.");
@@ -104,6 +108,7 @@ function loadweather(data) {
             for (e of elements) {
                 record[e.attr.type] = e.val;
             }
+            record.Distance=dist;
             let temp = record["air_temperature"];
             let winddir = record["wind_dir"];
             let windspeed = record["wind_spd_kmh"];
