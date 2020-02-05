@@ -24,13 +24,17 @@
 
     var PURPLE = {
       46225: "Watson", 42085: "Downer", 45307: "Bungendore", 41449: "Chisholm", 42391: "Tuggeranong",
-      45629: "Kingston", 46223: "Melba", 45529: "Hawker", 46289: "Nicholls", 46217: "Campbell"
+      45629: "Kingston", 46223: "Melba", 45529: "Hawker", 46289: "Nicholls", 46217: "Campbell",47073:"Spence",
+      46297: "Lyneham"
     };
 
     var PURPLE_LIST_URL = "https://www.purpleair.com/data.json?opt=1/mPM25/a10/cC0&fetch=true&nwlat=-35.113366&selat=-35.906423&nwlng=148.894512&selng=149.603537&fields=ID,Label,Lat,Lon,Age";
     var PURPLE_LIST_LOADED = false;
+    var PURPLE_TIMER;
 
-    var BOM_SITES = [94926,94925,94909,95925,99762,99763,99764,99765,99145,99146]; // All sites within 50km of Canberra
+    var BOM_SITES = [94926, 94925, 94909, 95925, 99762, 99763, 99764, 99765, 99145, 99146]; // All sites within 50km of Canberra
+    var BOM_LATEST_URL = "http://studio13.mithril.com.au/aqxref_latest.php";
+    var BOM_NAMES = {}; // Track preferred names.
 
     var ACT_HEALTH_URL = "https://www.health.act.gov.au/about-our-health-system/population-health/environmental-monitoring/monitoring-and-regulating-air-7";
 
@@ -40,7 +44,8 @@
       ["Fair", 67, "#f1c232"],
       ["Poor", 100, "#e59137"],
       ["Very Poor", 150, "#a64d79"],
-      ["Hazardous", 200, "#ff0000"]
+      ["Hazardous", 200, "#ff0000"],
+      ["Very Hazardous", 400, "magenta"]
     ];
 
     var THINGSPEAK = "https://thingspeak.com/channels/966200/feed.json"; // Palmerston (SKYWORXX)
@@ -69,6 +74,7 @@
       if (GOOGLE_LOADED) redrawchart();
       if (USETIMER) {
         setTimeout(updatetimer, nextminute());
+        setTimeout(updateTimes, 10000);
       }
 
     });
@@ -127,12 +133,12 @@
       showstatus(s);
     }
 
-    function dojson(url, success) {
+    function dojson(url, success, failure = jsonerror) {
       $.ajax({
         dataType: "json",
         url: url,
         success: success,
-        error: jsonerror,
+        error: failure,
         timeout: 20000 // 20 second timeout should be adequate
       });
     }
@@ -197,11 +203,7 @@
           //	  if (!('Florey' in row)) row['Florey']=0.0;
           //	  if (!('Civic' in row)) row['Civic']=0.0;
           //	  if (!('Monash' in row)) row['Monash']=0.0;
-          var d = new Date(row.timestamp + "1000"); // Times are all Canberra Non-daylight savings.
-          if (tz != -600) {
-            d.setMinutes(d.getMinutes() + (-600) - tz);
-          }
-          d = new Date(isodate(d)); // Slightly clunky way of converting to local time
+          var d = new Date(row.timestamp + "+1000"); // Times are all Canberra Non-daylight savings.
           lastdate = d;
           mydata = [d, row.Florey, row.Civic, row.Monash];
           data.addRow(mydata);
@@ -213,7 +215,7 @@
         }
         $("#status").html("Last Update=" + shorttime(lastdate));
         table = "<table><thead><th>Time</th><th>Florey</th><th>Civic</th><th>Monash</th></thead><tbody>\n" + table + "</tbody></table>";
-        table = "<b><a href='"+ACT_HEALTH_URL+"' target='_blank'>Hourly Figures ACT Health</a></b>" + table;
+        table = "<b><a href='" + ACT_HEALTH_URL + "' target='_blank'>Hourly Figures ACT Health</a></b>" + table;
         $("#figures").html(table);
       } catch (err) {
         showstatus(err.message);
@@ -223,6 +225,12 @@
       // Instantiate and draw the chart.
       var chart = new google.visualization.LineChart(document.getElementById('myPieChart'));
       chart.draw(data, null);
+    }
+
+    function updateTimes() {
+      updateWeather();
+      loadrealtime();
+      setTimeout(updateTimes, 10000);
     }
 
     function redrawchart() {
@@ -266,6 +274,7 @@
       dojson(url, loadchart);
 
       queryPurple();
+      dojson(BOM_LATEST_URL, loadweatherlatest)
 
       for (let i in BOM_SITES) {
         let station = BOM_SITES[i];
@@ -286,11 +295,24 @@
       dojson(url, loadpurple); // Downer + Bungendore + Chisholm
     }
 
+    function clearPurpleTimer() {
+      if (PURPLE_TIMER) clearTimeout(PURPLE_TIMER);
+      PURPLE_TIMER=null;
+    }
+
     function queryPurpleList() {
-      dojson(PURPLE_LIST_URL, loadPurpleList)
+      clearPurpleTimer();
+      dojson(PURPLE_LIST_URL,
+        loadPurpleList,
+        () => {
+          showstatus("Purple list failed. Retrying in 30 seconds");
+          PURPLE_TIMER=setTimeout(queryPurpleList, 30000);
+        }
+      );
     }
 
     function loadPurpleList(data) {
+      clearPurpleTimer();
       var fields = data.fields;
       var list = data.data;
       // "ID","age","conf","Type","Label","Lat","Lon","isOwner","Flags","CH"
@@ -342,8 +364,8 @@
     }
 
     function loadrealtime() {
-      var figures = "<b><a href='https://www.purpleair.com/map?opt=1/mPM25/a0/cC0#10.09/-35.2913/149.1851' target='_blank'>Realtime PM2.5</a></b> " +
-        shorttime(new Date());
+      var figures = "";
+      var lastdate;
       figures += "<table>";
       figures += "<thead><tr><th>Name</th><th>Current</th><th>1 Hr</th><th>Temp</th><th>Hum</th><th>Age</th></tr></thead>\n";
       figures += "<tbody>";
@@ -352,6 +374,7 @@
         var r = REALTIME[ix];
         var age = Math.round((now - r.datetime.getTime()) / 1000);
         if (age > 999) continue; // Too old to be trusted.
+        if (!lastdate || r.datetime > lastdate) lastdate = r.datetime;
         figures += "<tr><td><a href='" + mapurl(r.lat, r.lon) + "' target='_blank'>" + r.name + "</a></td>" +
           "<td " + rangetag(r.pm25) + ">" + r.pm25 + "</td>";
         figures += "<td " + rangetag(r.pm25_1hr) + ">" + r.pm25_1hr + "</td>";
@@ -360,6 +383,8 @@
         figures += "<td>" + showage(age) + "</td>";
         figures += "</tr>\n";
       }
+      figures = "<b><a href='https://www.purpleair.com/map?opt=1/mPM25/a0/cC0#10.09/-35.2913/149.1851' target='_blank'>Realtime PM2.5</a></b> " +
+        shorttime(lastdate) + figures;
       figures += "</tbody></table>";
       $('#purple').html(figures);
     }
@@ -374,12 +399,73 @@
       return Math.round(age / 60) + "m";
     }
 
+    function mergeBOM(record) {
+      var d;
+      if (record === null)
+        return;
+      if ("datetime" in record) record.date = new Date(record.datetime);
+      else {
+        let ds = record.aifstime_utc;
+        ds = ds.substr(0, 4) + "-" + ds.substr(4, 2) + "-" + ds.substr(6, 2) + "T" + ds.substr(8, 2) + ":" + ds.substr(10, 2) + ":" + ds.substr(12, 2) + "Z";
+        record.date = new Date(ds);
+      }
+      var id = record.wmo;
+      if (record.from == "Latest") { // Fix up naming inconsistencies.
+        record.air_temp = record.air_temperature;
+        record.rel_hum = record["rel-humidity"];
+        record.rain_trace = record["rainfall_24hr"];
+      } else {
+        BOM_NAMES[id] = record.name;
+      }
+      record.name = BOM_NAMES[id] || record.name;
+      record.haswind=(record.wind_dir!="");
+      if (!(id in BOM_READINGS)) BOM_READINGS[id] = record;
+      else {
+        var oldrec = BOM_READINGS[id];
+        if (record.date > oldrec.date) {
+          BOM_READINGS[id] = record;
+          if (!record.wind_dir) {
+            record.wind_spd_kmh = oldrec.wind_spd_kmh;
+            record.wind_dir = oldrec.wind_dir;
+          }
+          if (record.rel_hum==undefined) record.rel_hum=oldrec.rel_hum;
+          if (record.air_temp==undefined) record.air_temp=oldrec.air_temp;
+        }
+        else {
+          if (!oldrec.haswind) {
+            oldrec.wind_dir = record.wind_dir;
+            oldrec.wind_spd_kmh = record.wind_spd_kmh;
+          }
+        }
+      }
+      if (record.name == "Canberra") {
+        WINDDIR = record.wind_dir;
+        loadrealtime();
+      }
+    }
+
+    function loadweatherlatest(data) {
+      showstatus("Latest weather");
+      for (let record of data) {
+        record.from = "Latest";
+        mergeBOM(record);
+      }
+      updateWeather();
+    }
+
+
     function loadweather(data) {
+      if (!data) return;
+      data.from = "Station";
+      mergeBOM(data);
+      updateWeather();
+    }
+
+    function updateWeather() {
       /*  var observations=data.observations;
               var header=observations.header; */
       var result = "<table><thead><tr><th>Name</th><th>Temp</th><th>Wind</th><th>Rain</th><th>Hum</th><th>Age</th></tr></thead><tbody>";
-      BOM_READINGS[data.wmo] = data;
-      var lasttime = "Unknown";
+      var lasttime;
       var keys = [];
       var now = Date.now();
       for (let id in BOM_READINGS) keys.push(id);
@@ -388,11 +474,9 @@
         //    observations=BOM_READINGS[id];
         //    let latest=observations.data[0];
         let latest = BOM_READINGS[keys[id]];
-        let ds = latest.aifstime_utc;
-        ds = ds.substr(0, 4) + "-" + ds.substr(4, 2) + "-" + ds.substr(6, 2) + "T" + ds.substr(8, 2) + ":" + ds.substr(10, 2) + ":" + ds.substr(12, 2) + "Z";
-        let d = new Date(ds);
+        let d = latest.date;
         let age = Math.round((now - d.getTime()) / 1000);
-
+        if (age > 3600) continue; // Ignore really old readings.
         result += "<tr><td><a href='" + mapurl(latest.lat, latest.lon) + "' target='_blank'>" + latest.name + "</a></td>" +
           "<td>" + latest.air_temp + "</td>" +
           "<td>" + latest.wind_dir + " " + latest.wind_spd_kmh + "</td>" +
@@ -400,15 +484,11 @@
           "<td>" + latest.rel_hum + "</td>" +
           "<td>" + showage(age) + "</td>" +
           "</tr>\n";
-        lasttime = latest.local_date_time;
+        if (!lasttime || d > lasttime) lasttime = d;
       }
       result += "</tbody></table>";
       $("#weather").html(result);
-      $("#weather_time").html(lasttime);
-      if (data.name == "Canberra") {
-        WINDDIR = data.wind_dir;
-        loadrealtime();
-      }
+      $("#weather_time").html(shorttime(lasttime));
     }
 
     function loadthreshholds() {
@@ -614,8 +694,10 @@
         <br><b>Realtime</b> figures are sourced from Purple Air and Twitter user SKYWORXX. Realtime data can't be
         exactly matched to hourly data. Realtime locations are sorted according to the
         direction the wind is blowing, so in theory trends should be visible reading from top to bottom.
-        <br>Realtime temperature and humidity are drawn directly from the associated sensor, but these are small, privately owned sensor units.
-        Temperature tends to show a few degrees higher than the official BOM Weather Stations. This is mostly due the the heat of the surrounding
+        <br>Realtime temperature and humidity are drawn directly from the associated sensor, but these are small,
+        privately owned sensor units.
+        Temperature tends to show a few degrees higher than the official BOM Weather Stations. This is mostly due the
+        the heat of the surrounding
         electronics, and because the official weather stations are carefully shielded from direct sun.
       </div>
     </div>
@@ -623,7 +705,7 @@
     <div class="row" id="threshholds">
     </div>
   </div>
-  <p>Author: Robbie Matthews 
+  <p>Author: Robbie Matthews
     <a href="https://www.facebook.com/robbie.matthews.92" target="_blank">Facebook</a>
     <a href="https://twitter.com/ethanthescribe" target="_blank">Twitter</a>
   </p>

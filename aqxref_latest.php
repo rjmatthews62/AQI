@@ -39,7 +39,7 @@ foreach ($xmlDoc->getElementsByTagName("station") as $station) {
     if ($d<=60)  {
         $reading=Array();
 //        print("Station: ".$station->getAttribute("stn-name")." ($lat,$lon) ($d)\n");
-        $reading["ID"]=$station->getAttribute("wmo-id");
+        $reading["wmo"]=$station->getAttribute("wmo-id");
         $reading["name"]=$station->getAttribute("stn-name");
         $reading["lat"]=$lat;
         $reading["lon"]=$lon;
