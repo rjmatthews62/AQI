@@ -57,8 +57,12 @@
     const AQI_FIELDS = ["aqi_co", "aqi_n02", "aqi_o3_1hr", "aqi_o3_4hr", "aqi_pm10", "aqi_pm2_5"];
 
     var BOM_READINGS = {};
+    var BOM_STATIONS = {};
+    var BOM_LATEST = {};
 
     var USETIMER = false;
+    var NEXTTIME;
+    var LASTTIMER;
 
     var CANBERRA = [-35.2812958, 149.124822];
     var WIND_DIR_LIST = {};
@@ -73,7 +77,7 @@
       loadthreshholds();
       if (GOOGLE_LOADED) redrawchart();
       if (USETIMER) {
-        setTimeout(updatetimer, nextminute());
+        setNextTime();
         setTimeout(updateTimes, 10000);
       }
 
@@ -106,9 +110,16 @@
       return d.getTime() - Date.now();
     };
 
+    function setNextTime() {
+      if (LASTTIMER) clearTimeout(LASTTIMER);
+      var tm=nextminute();
+      LASTTIMER=setTimeout(updatetimer,tm);
+      NEXTTIME=new Date(Date.now()+tm);
+    }
+
     function updatetimer() {
       updatechart();
-      setTimeout(updatetimer, nextminute());
+      setNextTime();
     }
     /**
      * @param {string} atype
@@ -203,7 +214,7 @@
           //	  if (!('Florey' in row)) row['Florey']=0.0;
           //	  if (!('Civic' in row)) row['Civic']=0.0;
           //	  if (!('Monash' in row)) row['Monash']=0.0;
-          var d = new Date(row.timestamp + "+1000"); // Times are all Canberra Non-daylight savings.
+          var d = new Date(row.timestamp + "+10:00"); // Times are all Canberra Non-daylight savings.
           lastdate = d;
           mydata = [d, row.Florey, row.Civic, row.Monash];
           data.addRow(mydata);
@@ -379,12 +390,17 @@
           "<td " + rangetag(r.pm25) + ">" + r.pm25 + "</td>";
         figures += "<td " + rangetag(r.pm25_1hr) + ">" + r.pm25_1hr + "</td>";
         figures += "<td>" + r.temp.toFixed(1) + "</td>";
-        figures += "<td>" + r.hum + "</td>";
+        figures += "<td class='back'>" + r.hum + "</td>";
         figures += "<td>" + showage(age) + "</td>";
         figures += "</tr>\n";
       }
+      var ld=shorttime(lastdate);
+      if (USETIMER || NEXTTIME) {
+        age=Math.round((NEXTTIME.getTime()-now)/1000);
+        ld=ld+" ("+age+")";
+      }
       figures = "<b><a href='https://www.purpleair.com/map?opt=1/mPM25/a0/cC0#10.09/-35.2913/149.1851' target='_blank'>Realtime PM2.5</a></b> " +
-        shorttime(lastdate) + figures;
+        ld + figures;
       figures += "</tbody></table>";
       $('#purple').html(figures);
     }
@@ -399,47 +415,34 @@
       return Math.round(age / 60) + "m";
     }
 
-    function mergeBOM(record) {
-      var d;
-      if (record === null)
-        return;
-      if ("datetime" in record) record.date = new Date(record.datetime);
-      else {
-        let ds = record.aifstime_utc;
-        ds = ds.substr(0, 4) + "-" + ds.substr(4, 2) + "-" + ds.substr(6, 2) + "T" + ds.substr(8, 2) + ":" + ds.substr(10, 2) + ":" + ds.substr(12, 2) + "Z";
-        record.date = new Date(ds);
+    function mergeBOM(id) {
+      var latest=BOM_LATEST[id] || {};
+      var station=BOM_STATIONS[id] || {};
+      var reading={wmo: id};
+      reading.name = BOM_NAMES[id] || station["name"] || latest["name"];
+      reading.date=latest["date"] || station["date"];
+      if (station["date"] && station["date"]>reading.date) reading.date=station["date"];
+
+
+      var cmp=function(lfield,sfield) {
+        var l1 = latest[lfield];
+        var s1 = station[sfield];
+        if (l1==undefined) return s1;
+        if (s1==undefined) return l1;
+        return (latest.date>station.date ? l1 : s1);
       }
-      var id = record.wmo;
-      if (record.from == "Latest") { // Fix up naming inconsistencies.
-        record.air_temp = record.air_temperature;
-        record.rel_hum = record["rel-humidity"];
-        record.rain_trace = record["rainfall_24hr"];
-      } else {
-        BOM_NAMES[id] = record.name;
-      }
-      record.name = BOM_NAMES[id] || record.name;
-      record.haswind=(record.wind_dir!="");
-      if (!(id in BOM_READINGS)) BOM_READINGS[id] = record;
-      else {
-        var oldrec = BOM_READINGS[id];
-        if (record.date > oldrec.date) {
-          BOM_READINGS[id] = record;
-          if (!record.wind_dir) {
-            record.wind_spd_kmh = oldrec.wind_spd_kmh;
-            record.wind_dir = oldrec.wind_dir;
-          }
-          if (record.rel_hum==undefined) record.rel_hum=oldrec.rel_hum;
-          if (record.air_temp==undefined) record.air_temp=oldrec.air_temp;
-        }
-        else {
-          if (!oldrec.haswind) {
-            oldrec.wind_dir = record.wind_dir;
-            oldrec.wind_spd_kmh = record.wind_spd_kmh;
-          }
-        }
-      }
-      if (record.name == "Canberra") {
-        WINDDIR = record.wind_dir;
+
+      reading.air_temp=cmp("air_temperature","air_temp");
+      reading.rel_hum=cmp("rel-humidity","rel_hum");
+      reading.rain_trace=cmp("rainfall_24hr","rain_trace");
+      reading.wind_dir=cmp("wind_dir","wind_dir");
+      reading.wind_spd_kmh=cmp("wind_spd_kmh","wind_spd_kmh");
+      reading.lat=cmp("lat","lat");
+      reading.lon=cmp("lon","lon");
+      reading.from=cmp("from","from");
+      BOM_READINGS[id]=reading;
+      if (reading.name=="Canberra") {
+        WINDDIR = reading.wind_dir;
         loadrealtime();
       }
     }
@@ -448,7 +451,10 @@
       showstatus("Latest weather");
       for (let record of data) {
         record.from = "Latest";
-        mergeBOM(record);
+        var id=record.wmo;
+        record.date = new Date(record.datetime);
+        BOM_LATEST[id]=record;
+        mergeBOM(id);
       }
       updateWeather();
     }
@@ -457,7 +463,13 @@
     function loadweather(data) {
       if (!data) return;
       data.from = "Station";
-      mergeBOM(data);
+      var id=data.wmo;
+      let ds = data.aifstime_utc;
+      ds = ds.substr(0, 4) + "-" + ds.substr(4, 2) + "-" + ds.substr(6, 2) + "T" + ds.substr(8, 2) + ":" + ds.substr(10, 2) + ":" + ds.substr(12, 2) + "Z";
+      data.date = new Date(ds);
+      BOM_STATIONS[id]=data;
+      BOM_NAMES[id] = data.name;
+      mergeBOM(id);
       updateWeather();
     }
 
@@ -476,12 +488,12 @@
         let latest = BOM_READINGS[keys[id]];
         let d = latest.date;
         let age = Math.round((now - d.getTime()) / 1000);
-        if (age > 3600) continue; // Ignore really old readings.
+        if (age > 5400) continue; // Ignore really old readings.
         result += "<tr><td><a href='" + mapurl(latest.lat, latest.lon) + "' target='_blank'>" + latest.name + "</a></td>" +
           "<td>" + latest.air_temp + "</td>" +
-          "<td>" + latest.wind_dir + " " + latest.wind_spd_kmh + "</td>" +
+          "<td class='back'>" + latest.wind_dir + " " + latest.wind_spd_kmh + "</td>" +
           "<td>" + latest.rain_trace + "</td>" +
-          "<td>" + latest.rel_hum + "</td>" +
+          "<td class='back'>" + latest.rel_hum + "</td>" +
           "<td>" + showage(age) + "</td>" +
           "</tr>\n";
         if (!lasttime || d > lasttime) lasttime = d;
@@ -630,6 +642,9 @@
     .thold {
       color: white;
       font-weight: bold;
+    }
+    .back {
+      background-color: lightgray;
     }
   </style>
 
